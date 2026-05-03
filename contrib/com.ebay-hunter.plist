@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <!-- Unique label — used by launchctl to identify this job -->
+  <key>Label</key>
+  <string>com.ebay-hunter</string>
+
+  <!-- Command to run. Adjust paths if your project or venv lives elsewhere. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/glisk/Workdir/ebay-hunter/.venv/bin/python</string>
+    <string>/Users/glisk/Workdir/ebay-hunter/hunt.py</string>
+    <string>--report</string>
+  </array>
+
+  <!-- Working directory — report.md and cache/ are written relative to this -->
+  <key>WorkingDirectory</key>
+  <string>/Users/glisk/Workdir/ebay-hunter</string>
+
+  <!-- Run every 2 hours (7200 seconds) -->
+  <key>StartInterval</key>
+  <integer>7200</integer>
+
+  <!-- Stdout and stderr go to these files for debugging -->
+  <key>StandardOutPath</key>
+  <string>/Users/glisk/Workdir/ebay-hunter/cache/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/glisk/Workdir/ebay-hunter/cache/launchd-error.log</string>
+
+  <!-- Restart automatically if it crashes -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <!-- Run even if the job was missed while the machine was asleep -->
+  <key>RunAtLoad</key>
+  <false/>
+
+</dict>
+</plist>

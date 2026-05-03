@@ -12,6 +12,7 @@ Usage:
   python hunt.py --sandbox           Use eBay sandbox environment
   python hunt.py --force-refresh     Force OAuth token refresh
   python hunt.py --verbose-filters   Print discard reasons to stdout
+  python hunt.py --report            Write cache/report.md for review in Claude.ai
 """
 
 import argparse
@@ -77,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print discard reasons for each filtered-out listing.",
     )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Write a plain markdown summary to cache/report.md (for pasting into Claude.ai).",
+    )
     return parser
 
 
@@ -140,6 +146,20 @@ def run_once(args: argparse.Namespace) -> bool:
             show_marginal=args.show_all,
             new_only=args.new_only,
         )
+
+        # 7. Write markdown report if requested
+        if args.report:
+            from src import report as reporter
+            path = reporter.write_report(
+                scored_items=scored,
+                new_listings=new_listings,
+                price_drops=price_drops,
+                disappeared=disappeared,
+                total_fetched=total_fetched,
+                after_dedup=after_dedup,
+                after_discard=after_discard,
+            )
+            display.console.print(f"[dim]Report written to {path}[/dim]")
 
         return True
 
