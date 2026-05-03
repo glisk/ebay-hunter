@@ -177,9 +177,12 @@ def _item_card(item: dict[str, Any], compact: bool = False) -> Panel:
         price_text.append(f"  was {_format_price(old_price)}", style="dim red strike")
 
     # PSU badge
+    psu_source = item.get("psu_source", "unknown")
     psu_text = _psu_badge(psu)
     if psu == "RED":
         psu_text.append(" ⚠ 450W inadequate for GPU", style="bold red")
+    elif psu == "GREEN" and psu_source == "platform_spec":
+        psu_text.append(" (platform spec)", style="dim")
 
     # Feedback
     if feedback is not None:
