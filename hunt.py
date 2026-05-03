@@ -92,7 +92,8 @@ def run_once(args: argparse.Namespace) -> bool:
 
     Returns True on success, False on error.
     """
-    from src import auth, search, filters, scorer, persistence, display
+    from src import auth, search, filters, scorer, persistence, display, database
+    from datetime import datetime, timezone
 
     try:
         # 1. Fetch all results from eBay
@@ -134,7 +135,37 @@ def run_once(args: argparse.Namespace) -> bool:
             queries_run=search.QUERIES,
         )
 
-        # 6. Render output
+        # 6. Record price observations in SQLite history DB
+        observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn = database.open_db()
+        for item in scored:
+            item_id = item.get("item_id", "")
+            queries = query_hits.get(item_id, [])
+            search_query = queries[0] if queries else "unknown"
+            database.record_observation(
+                conn=conn,
+                item_id=item_id,
+                search_query=search_query,
+                observed_at=observed_at,
+                price=item.get("price", 0.0),
+                score=item.get("score"),
+            )
+        for item in disappeared:
+            item_id = item.get("item_id", "")
+            queries = query_hits.get(item_id, [])
+            search_query = queries[0] if queries else "unknown"
+            database.mark_disappeared(
+                conn=conn,
+                item_id=item_id,
+                observed_at=observed_at,
+                search_query=search_query,
+                price=item.get("price", 0.0),
+            )
+        conn.commit()
+        history_depth = database.history_depth_days(conn)
+        conn.close()
+
+        # 7. Render output
         display.print_full_results(
             scored_items=scored,
             new_listings=new_listings,
@@ -147,7 +178,7 @@ def run_once(args: argparse.Namespace) -> bool:
             new_only=args.new_only,
         )
 
-        # 7. Write markdown report if requested
+        # 8. Write markdown report if requested
         if args.report:
             from src import report as reporter
             path = reporter.write_report(
@@ -158,6 +189,7 @@ def run_once(args: argparse.Namespace) -> bool:
                 total_fetched=total_fetched,
                 after_dedup=after_dedup,
                 after_discard=after_discard,
+                history_depth=history_depth,
             )
             display.console.print(f"[dim]Report written to {path}[/dim]")
 

@@ -84,6 +84,7 @@ def write_report(
     total_fetched: int,
     after_dedup: int,
     after_discard: int,
+    history_depth: int = 0,
 ) -> Path:
     """Write cache/report.md and return its path."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,6 +101,7 @@ def write_report(
 
     # Run summary
     sections.append("## Run Summary\n")
+    depth_note = f"{history_depth} days" if history_depth >= 90 else f"{history_depth} days (90 days needed for full signal)"
     sections.append(
         f"| | |\n|---|---|\n"
         f"| Total fetched | {total_fetched} |\n"
@@ -109,7 +111,36 @@ def write_report(
         f"| New listings | {len(new_listings)} |\n"
         f"| Price drops | {len(price_drops)} |\n"
         f"| Disappeared | {len(disappeared)} |\n"
+        f"| Price history depth | {depth_note} |\n"
     )
+
+    # Price History (one section per query, suppressed if <5 observations)
+    from src.database import open_db, price_stats, price_context
+    from src.search import QUERIES
+    try:
+        db_conn = open_db()
+        for query in QUERIES:
+            stats = price_stats(db_conn, query)
+            if stats is None:
+                continue
+            sections.append(
+                f"## Price History — \"{query}\" "
+                f"(last {stats['days']} days, {stats['count']} observations)\n"
+            )
+            sections.append(
+                f"| Metric | Price |\n"
+                f"|---|---|\n"
+                f"| Floor (P10) | ${stats['p10']:,.0f} |\n"
+                f"| Median (P50) | ${stats['p50']:,.0f} |\n"
+                f"| Ceiling (P90) | ${stats['p90']:,.0f} |\n"
+                f"| Observed min | ${stats['min']:,.0f} |\n"
+                f"| Observed max | ${stats['max']:,.0f} |\n"
+            )
+            # Interpretive line using median as representative price
+            sections.append(f"> {price_context(stats['p50'], stats)}\n")
+        db_conn.close()
+    except Exception:
+        pass  # DB not yet initialized or no data — silently skip
 
     # New listings
     if new_listings:
