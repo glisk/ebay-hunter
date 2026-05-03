@@ -150,6 +150,7 @@ def _make_record(
         "score": item.get("score", 0),
         "tier": item.get("tier", ""),
         "psu_status": item.get("psu_status", "YELLOW"),
+        "psu_source": item.get("psu_source", "unknown"),
         "cpu_detected": item.get("cpu_detected"),
         "ram_detected": item.get("ram_detected"),
         "seller_feedback": item.get("seller_feedback_pct"),

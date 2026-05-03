@@ -29,6 +29,21 @@ CPU_3000 = ["3945WX", "3955WX", "3975WX", "3995WX"]
 PSU_GREEN_PATTERNS = [r"\b900W\b", r"\b1000W\b", r"\b1200W\b", r"\b1[Kk]W\b", r"\b1\.0?[Kk]W\b"]
 PSU_RED_PATTERNS = [r"\b450W\b"]
 
+# Platform detection — match substrings in title (case-insensitive)
+PLATFORM_PATTERNS = [
+    (r"P620", "P620"),
+    (r"Precision\s+7865", "Precision 7865"),
+    (r"Z6\s+G5", "HP Z6 G5"),
+]
+
+# Platform PSU lookup — confirmed minimum wattage from manufacturer spec databases
+# None = not yet verified, will fall back to YELLOW
+PLATFORM_PSU_WATTAGE: dict[str, int | None] = {
+    "P620": 1000,          # Lenovo spec DB, all SKUs, 1000W Platinum Fixed (2026-04-28)
+    "Precision 7865": None,  # Not yet verified
+    "HP Z6 G5": None,        # Not yet verified
+}
+
 # RAM detection — order matters, more specific first
 RAM_PATTERNS = [
     (r"\b512\s*GB\b", 512),
@@ -78,6 +93,10 @@ PSU_GREEN = "GREEN"
 PSU_YELLOW = "YELLOW"
 PSU_RED = "RED"
 
+PSU_SOURCE_LISTING = "listing_text"
+PSU_SOURCE_PLATFORM = "platform_spec"
+PSU_SOURCE_UNKNOWN = "unknown"
+
 
 # ---------------------------------------------------------------------------
 # Parsing helpers
@@ -109,16 +128,38 @@ def detect_ram(item: dict[str, Any]) -> int | None:
     return None
 
 
-def detect_psu(item: dict[str, Any]) -> str:
-    """Return PSU classification: GREEN, YELLOW, or RED."""
+def detect_platform(item: dict[str, Any]) -> str | None:
+    """Return the platform name if detected in the title, else None."""
+    text = _text(item)
+    for pattern, name in PLATFORM_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return name
+    return None
+
+
+def detect_psu(item: dict[str, Any]) -> tuple[str, str]:
+    """
+    Return (classification, source) for PSU.
+
+    classification: GREEN, YELLOW, or RED
+    source: listing_text | platform_spec | unknown
+    """
     text = _text(item)
     for pat in PSU_GREEN_PATTERNS:
         if re.search(pat, text, re.IGNORECASE):
-            return PSU_GREEN
+            return PSU_GREEN, PSU_SOURCE_LISTING
     for pat in PSU_RED_PATTERNS:
         if re.search(pat, text, re.IGNORECASE):
-            return PSU_RED
-    return PSU_YELLOW
+            return PSU_RED, PSU_SOURCE_LISTING
+
+    # No wattage in listing text — try platform lookup
+    platform = detect_platform(item)
+    if platform:
+        known_wattage = PLATFORM_PSU_WATTAGE.get(platform)
+        if known_wattage is not None and known_wattage >= 900:
+            return PSU_GREEN, PSU_SOURCE_PLATFORM
+
+    return PSU_YELLOW, PSU_SOURCE_UNKNOWN
 
 
 def detect_gpu(item: dict[str, Any]) -> bool | None:
@@ -226,7 +267,7 @@ def score_listing(item: dict[str, Any]) -> dict[str, Any]:
 
     cpu = detect_cpu(item)
     ram_gb = detect_ram(item)
-    psu = detect_psu(item)
+    psu, psu_source = detect_psu(item)
     gpu = detect_gpu(item)
     storage = detect_storage(item)
     price = item.get("price", 0.0)
@@ -234,6 +275,7 @@ def score_listing(item: dict[str, Any]) -> dict[str, Any]:
     item["cpu_detected"] = cpu
     item["ram_detected"] = f"{ram_gb}GB" if ram_gb else None
     item["psu_status"] = psu
+    item["psu_source"] = psu_source
 
     flags: list[str] = list(item.get("flags", []))
     breakdown: dict[str, int] = {}

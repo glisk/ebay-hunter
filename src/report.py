@@ -23,8 +23,14 @@ def _fmt_feedback(feedback: float | None) -> str:
     return f"{feedback:.1f}%" if feedback is not None else "unknown"
 
 
-def _psu_label(status: str) -> str:
-    return {"GREEN": "✓ confirmed ≥900W", "YELLOW": "unknown", "RED": "✗ 450W inadequate"}.get(status, status)
+def _psu_label(status: str, source: str = "unknown") -> str:
+    if status == "GREEN":
+        if source == "platform_spec":
+            return "✓ GREEN (platform spec)"
+        return "✓ GREEN (listing text)"
+    if status == "RED":
+        return "✗ RED — 450W inadequate"
+    return "YELLOW — unknown"
 
 
 def _time_ago(iso_str: str) -> str:
@@ -60,7 +66,7 @@ def _item_block(item: dict[str, Any], index: int) -> str:
         f"| Price | {_fmt_price(item.get('price', 0))} |",
         f"| CPU | {item.get('cpu_detected') or 'unknown'} |",
         f"| RAM | {item.get('ram_detected') or 'unknown'} |",
-        f"| PSU | {_psu_label(item.get('psu_status', 'YELLOW'))} |",
+        f"| PSU | {_psu_label(item.get('psu_status', 'YELLOW'), item.get('psu_source', 'unknown'))} |",
         f"| Seller feedback | {_fmt_feedback(feedback)} |",
         f"| Local pickup | {'Yes' if item.get('local_pickup') else 'No'} |",
         f"| First seen | {_time_ago(item.get('first_seen', ''))} |",
