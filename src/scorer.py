@@ -33,15 +33,16 @@ PSU_RED_PATTERNS = [r"\b450W\b"]
 PLATFORM_PATTERNS = [
     (r"P620", "P620"),
     (r"Precision\s+7865", "Precision 7865"),
-    (r"Z6\s+G5", "HP Z6 G5"),
+    # Match "Z6 G5 A" only — the Z6 G5 (no suffix) is Intel Xeon W, not Threadripper PRO
+    (r"Z6\s+G5\s+A", "HP Z6 G5 A"),
 ]
 
-# Platform PSU lookup — confirmed minimum wattage from manufacturer spec databases
-# None = not yet verified, will fall back to YELLOW
+# Platform PSU lookup — confirmed minimum wattage from manufacturer spec databases.
+# None = verified variable configuration; YELLOW is the correct classification.
 PLATFORM_PSU_WATTAGE: dict[str, int | None] = {
-    "P620": 1000,          # Lenovo spec DB, all SKUs, 1000W Platinum Fixed (2026-04-28)
-    "Precision 7865": None,  # Not yet verified
-    "HP Z6 G5": None,        # Not yet verified
+    "P620": 1000,            # CONFIRMED fixed: Lenovo spec DB, 1000W Platinum across all SKUs (2026-04-28)
+    "Precision 7865": None,  # VERIFIED variable: 1000W and 1300W options per Dell service manual
+    "HP Z6 G5 A": None,      # VERIFIED variable: 775W/1125W/1275W/1450W options per HP QuickSpecs (Dec 2023)
 }
 
 # RAM detection — order matters, more specific first
