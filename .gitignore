@@ -13,3 +13,5 @@ __pycache__/
 # Virtual environment if used
 venv/
 .venv/
+eb_hunter_app*.txt
+ebay_hunter_additional_prompt.md
