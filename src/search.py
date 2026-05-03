@@ -109,15 +109,11 @@ def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
     """
     Flatten a raw eBay itemSummary into a consistent internal dict.
 
-    # TODO: Verify which fields are actually present in Browse API summary
-    # responses once credentials are available. Fields confirmed below are
-    # documented in the eBay Browse API v1 spec; actual presence may vary.
-    #
-    # Specifically check:
-    #   - seller.feedbackPercentage — may require per-item GET call
-    #   - seller.feedbackScore      — same caveat
-    #   - shippingOptions           — structure varies
-    #   - localPickup               — may be under shippingOptions
+    Confirmed present in Browse API summary responses (verified against
+    production API 2026-05-03):
+    - seller.feedbackPercentage, seller.feedbackScore — no per-item call needed
+    - shippingOptions[] with shippingCostType and shippingCost
+    - itemLocation.country for seller location filtering
     """
     price_value = 0.0
     price_obj = raw.get("price", {})
@@ -128,8 +124,6 @@ def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
             price_value = 0.0
 
     seller = raw.get("seller", {})
-    # TODO: Confirm feedbackPercentage is in summary response; if not,
-    # implement batch enrichment via GET /buy/browse/v1/item/{item_id}
     feedback_pct = None
     feedback_score = None
     raw_pct = seller.get("feedbackPercentage")
