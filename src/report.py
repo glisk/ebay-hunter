@@ -85,6 +85,7 @@ def write_report(
     after_dedup: int,
     after_discard: int,
     history_depth: int = 0,
+    obs_excluded: int = 0,
 ) -> Path:
     """Write cache/report.md and return its path."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -101,7 +102,9 @@ def write_report(
 
     # Run summary
     sections.append("## Run Summary\n")
-    depth_note = f"{history_depth} days" if history_depth >= 90 else f"{history_depth} days (90 days needed for full signal)"
+    day_word = "day" if history_depth == 1 else "days"
+    depth_note = f"{history_depth} {day_word}" if history_depth >= 90 else f"{history_depth} {day_word} (90 days needed for full signal)"
+    excluded_note = f" | Observations excluded (SUSPICIOUS_LOW) | {obs_excluded} |\n" if obs_excluded else ""
     sections.append(
         f"| | |\n|---|---|\n"
         f"| Total fetched | {total_fetched} |\n"
@@ -112,6 +115,7 @@ def write_report(
         f"| Price drops | {len(price_drops)} |\n"
         f"| Disappeared | {len(disappeared)} |\n"
         f"| Price history depth | {depth_note} |\n"
+        + excluded_note
     )
 
     # Price History (one section per query, suppressed if <5 observations)
