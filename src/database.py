@@ -32,6 +32,22 @@ CREATE INDEX IF NOT EXISTS idx_price_obs_item
 
 CREATE INDEX IF NOT EXISTS idx_price_obs_query
     ON price_observations (search_query, observed_at);
+
+CREATE TABLE IF NOT EXISTS gpu_price_observations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id      TEXT    NOT NULL,
+    search_query TEXT    NOT NULL,
+    observed_at  TEXT    NOT NULL,  -- ISO 8601 UTC
+    price        REAL    NOT NULL,
+    score        INTEGER,
+    status       TEXT    NOT NULL DEFAULT 'active'
+);
+
+CREATE INDEX IF NOT EXISTS idx_gpu_price_obs_item
+    ON gpu_price_observations (item_id, observed_at);
+
+CREATE INDEX IF NOT EXISTS idx_gpu_price_obs_query
+    ON gpu_price_observations (search_query, observed_at);
 """
 
 
@@ -171,3 +187,97 @@ def history_depth_days(conn: sqlite3.Connection) -> int:
     earliest = datetime.fromisoformat(row["earliest"].replace("Z", "+00:00"))
     now = datetime.now(timezone.utc)
     return max(0, (now - earliest).days)
+
+
+# ---------------------------------------------------------------------------
+# GPU price history — parallel table, identical interface
+# ---------------------------------------------------------------------------
+
+def record_gpu_observation(
+    conn: sqlite3.Connection,
+    item_id: str,
+    search_query: str,
+    observed_at: str,
+    price: float,
+    score: int | None,
+    status: str = "active",
+    flags: list[str] | None = None,
+) -> bool:
+    """
+    Record a GPU price observation. Returns False (skipped) if SUSPICIOUS_LOW.
+    Anomalous prices must not contaminate the market statistics baseline.
+    """
+    if flags and "SUSPICIOUS_LOW" in flags:
+        return False
+    conn.execute(
+        """
+        INSERT INTO gpu_price_observations
+            (item_id, search_query, observed_at, price, score, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (item_id, search_query, observed_at, price, score, status),
+    )
+    return True
+
+
+def mark_gpu_disappeared(
+    conn: sqlite3.Connection,
+    item_id: str,
+    observed_at: str,
+    search_query: str,
+    price: float,
+) -> None:
+    """Record a final 'disappeared' observation for a GPU listing no longer returned."""
+    conn.execute(
+        """
+        INSERT INTO gpu_price_observations
+            (item_id, search_query, observed_at, price, score, status)
+        VALUES (?, ?, ?, ?, NULL, 'disappeared')
+        """,
+        (item_id, search_query, observed_at, price),
+    )
+
+
+def gpu_price_stats(
+    conn: sqlite3.Connection,
+    search_query: str,
+    days: int = 90,
+    min_observations: int = 5,
+) -> dict[str, Any] | None:
+    """Compute GPU price statistics for a query over the last N days."""
+    rows = conn.execute(
+        """
+        SELECT price FROM gpu_price_observations
+        WHERE search_query = ?
+          AND observed_at >= datetime('now', ? || ' days')
+          AND status = 'active'
+        ORDER BY price
+        """,
+        (search_query, f"-{days}"),
+    ).fetchall()
+
+    prices = [r["price"] for r in rows]
+    if len(prices) < min_observations:
+        return None
+
+    return {
+        "query": search_query,
+        "count": len(prices),
+        "min": min(prices),
+        "p10": _percentile(prices, 10),
+        "p50": _percentile(prices, 50),
+        "p90": _percentile(prices, 90),
+        "max": max(prices),
+        "days": days,
+    }
+
+
+def gpu_history_depth_days(conn: sqlite3.Connection) -> int:
+    """Return how many calendar days of GPU observations are in the database."""
+    row = conn.execute(
+        "SELECT CAST(julianday('now') - julianday(MIN(observed_at)) AS INTEGER) AS depth "
+        "FROM gpu_price_observations"
+    ).fetchone()
+    if not row or row["depth"] is None:
+        return 0
+    return max(0, row["depth"])
