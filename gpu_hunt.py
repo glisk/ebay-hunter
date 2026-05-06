@@ -151,6 +151,7 @@ def run_once(args: argparse.Namespace) -> bool:
         # 8. Write markdown report if requested
         if args.report:
             from src import gpu_report as reporter
+            discard_breakdown = gpu_filters.categorize_discard_reasons(discarded)
             path = reporter.write_gpu_report(
                 scored_items=scored,
                 new_listings=new_listings,
@@ -161,6 +162,7 @@ def run_once(args: argparse.Namespace) -> bool:
                 after_discard=after_discard,
                 history_depth=history_depth,
                 obs_excluded=obs_excluded,
+                discard_breakdown=discard_breakdown,
             )
             gpu_display.console.print(f"[dim]GPU report written to {path}[/dim]")
 

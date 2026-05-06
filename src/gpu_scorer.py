@@ -26,11 +26,18 @@ FLAG_SUSPICIOUS_LOW = "SUSPICIOUS_LOW"
 FLAG_MINING_DISCLOSED = "MINING_DISCLOSED"
 FLAG_BIOS_MODIFIED = "BIOS_MODIFIED"
 FLAG_REPASTED = "REPASTED"
+FLAG_REPAIR_DISCLOSED = "REPAIR_DISCLOSED"
 FLAG_NVLINK_INCLUDED = "NVLINK_INCLUDED"
 FLAG_TITLE_INCONSISTENCY = "TITLE_INCONSISTENCY"
 FLAG_NO_ACTUAL_PHOTO = "NO_ACTUAL_PHOTO"
 FLAG_NEW = "NEW"
 FLAG_PRICE_DROP = "PRICE_DROP"
+
+REPAIR_SIGNALS = [
+    "repaired", " repair ", "professionally repaired",
+    "replaced board", "replaced capacitor", "bga reflow",
+    "recapped", "reballed", "reflowed",
+]
 
 # ---------------------------------------------------------------------------
 # Pricing model
@@ -109,6 +116,14 @@ def detect_mining_flags(item: dict[str, Any]) -> list[str]:
         flags.append(FLAG_REPASTED)
 
     return flags
+
+
+def detect_repair_flags(item: dict[str, Any]) -> list[str]:
+    """Return REPAIR_DISCLOSED flag if repair language detected in title or description."""
+    text = _text(item).lower()
+    if any(s in text for s in REPAIR_SIGNALS):
+        return [FLAG_REPAIR_DISCLOSED]
+    return []
 
 
 def detect_nvlink(item: dict[str, Any]) -> bool:
@@ -276,8 +291,13 @@ def score_gpu_listing(item: dict[str, Any]) -> dict[str, Any]:
     # Detections
     card_status = detect_card_confirmed(item)
     mining_flags = detect_mining_flags(item)
+    repair_flags = detect_repair_flags(item)
     nvlink = detect_nvlink(item)
     condition_tier, condition_pts = detect_condition_tier(item)
+
+    for f in repair_flags:
+        if f not in flags:
+            flags.append(f)
 
     for f in mining_flags:
         if f not in flags:
@@ -329,15 +349,17 @@ def score_gpu_listing(item: dict[str, Any]) -> dict[str, Any]:
 
     base_score = sum(breakdown.values())
 
-    # Mining penalties (applied after base, independent per flag)
-    mining_penalty = 0
+    # Penalties (applied after base, independent per flag)
+    penalty = 0
     if FLAG_MINING_DISCLOSED in flags:
-        mining_penalty += 5
+        penalty += 5
     if FLAG_BIOS_MODIFIED in flags:
-        mining_penalty += 10
-    breakdown["mining_penalty"] = -mining_penalty
+        penalty += 10
+    if FLAG_REPAIR_DISCLOSED in flags:
+        penalty += 5
+    breakdown["penalties"] = -penalty
 
-    total = max(0, min(100, base_score - mining_penalty))
+    total = max(0, min(100, base_score - penalty))
 
     if total >= 70:
         tier = TIER_PRIORITY
