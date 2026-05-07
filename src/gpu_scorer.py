@@ -26,11 +26,24 @@ FLAG_SUSPICIOUS_LOW = "SUSPICIOUS_LOW"
 FLAG_MINING_DISCLOSED = "MINING_DISCLOSED"
 FLAG_BIOS_MODIFIED = "BIOS_MODIFIED"
 FLAG_REPASTED = "REPASTED"
+FLAG_REPAIR_DISCLOSED = "REPAIR_DISCLOSED"
 FLAG_NVLINK_INCLUDED = "NVLINK_INCLUDED"
 FLAG_TITLE_INCONSISTENCY = "TITLE_INCONSISTENCY"
 FLAG_NO_ACTUAL_PHOTO = "NO_ACTUAL_PHOTO"
+FLAG_SEE_DESCRIPTION = "SEE_DESCRIPTION"
 FLAG_NEW = "NEW"
 FLAG_PRICE_DROP = "PRICE_DROP"
+
+SEE_DESCRIPTION_PATTERNS = [
+    "read description", "see description", "read listing",
+    "read details", "see listing",
+]
+
+REPAIR_SIGNALS = [
+    "repaired", " repair ", "professionally repaired",
+    "replaced board", "replaced capacitor", "bga reflow",
+    "recapped", "reballed", "reflowed",
+]
 
 # ---------------------------------------------------------------------------
 # Pricing model
@@ -49,7 +62,9 @@ GPU_PRICE_TABLE = {
 # ---------------------------------------------------------------------------
 
 def _text(item: dict[str, Any]) -> str:
-    return item.get("title", "") + " " + item.get("short_description", "")
+    return (item.get("title", "") + " "
+            + item.get("short_description", "") + " "
+            + item.get("description", ""))
 
 
 def detect_card_confirmed(item: dict[str, Any]) -> str:
@@ -109,6 +124,14 @@ def detect_mining_flags(item: dict[str, Any]) -> list[str]:
         flags.append(FLAG_REPASTED)
 
     return flags
+
+
+def detect_repair_flags(item: dict[str, Any]) -> list[str]:
+    """Return REPAIR_DISCLOSED flag if repair language detected in title or description."""
+    text = _text(item).lower()
+    if any(s in text for s in REPAIR_SIGNALS):
+        return [FLAG_REPAIR_DISCLOSED]
+    return []
 
 
 def detect_nvlink(item: dict[str, Any]) -> bool:
@@ -174,6 +197,12 @@ def detect_title_inconsistency(item: dict[str, Any]) -> bool:
     has_3090 = bool(re.search(r"\b3090\b", text, re.IGNORECASE))
     has_other = bool(re.search(r"\b(3080|3070|3060|4090|4080|4070|2080|2070)\b", text, re.IGNORECASE))
     return has_3090 and has_other
+
+
+def detect_see_description(item: dict[str, Any]) -> bool:
+    """Flag if title contains 'read/see description' — seller placed material info in body."""
+    title_lower = item.get("title", "").lower()
+    return any(p in title_lower for p in SEE_DESCRIPTION_PATTERNS)
 
 
 def detect_no_actual_photo(item: dict[str, Any]) -> bool:
@@ -276,8 +305,13 @@ def score_gpu_listing(item: dict[str, Any]) -> dict[str, Any]:
     # Detections
     card_status = detect_card_confirmed(item)
     mining_flags = detect_mining_flags(item)
+    repair_flags = detect_repair_flags(item)
     nvlink = detect_nvlink(item)
     condition_tier, condition_pts = detect_condition_tier(item)
+
+    for f in repair_flags:
+        if f not in flags:
+            flags.append(f)
 
     for f in mining_flags:
         if f not in flags:
@@ -291,6 +325,9 @@ def score_gpu_listing(item: dict[str, Any]) -> dict[str, Any]:
 
     if detect_no_actual_photo(item):
         flags.append(FLAG_NO_ACTUAL_PHOTO)
+
+    if detect_see_description(item):
+        flags.append(FLAG_SEE_DESCRIPTION)
 
     # Determine price row condition key
     condition_key = "refurbished" if condition_tier == "refurbished" else "standard"
@@ -329,15 +366,17 @@ def score_gpu_listing(item: dict[str, Any]) -> dict[str, Any]:
 
     base_score = sum(breakdown.values())
 
-    # Mining penalties (applied after base, independent per flag)
-    mining_penalty = 0
+    # Penalties (applied after base, independent per flag)
+    penalty = 0
     if FLAG_MINING_DISCLOSED in flags:
-        mining_penalty += 5
+        penalty += 5
     if FLAG_BIOS_MODIFIED in flags:
-        mining_penalty += 10
-    breakdown["mining_penalty"] = -mining_penalty
+        penalty += 10
+    if FLAG_REPAIR_DISCLOSED in flags:
+        penalty += 5
+    breakdown["penalties"] = -penalty
 
-    total = max(0, min(100, base_score - mining_penalty))
+    total = max(0, min(100, base_score - penalty))
 
     if total >= 70:
         tier = TIER_PRIORITY

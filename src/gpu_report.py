@@ -87,6 +87,7 @@ def write_gpu_report(
     after_discard: int,
     history_depth: int = 0,
     obs_excluded: int = 0,
+    discard_breakdown: dict[str, int] | None = None,
 ) -> Path:
     """Write cache/gpu-report.md and return its path."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -122,6 +123,24 @@ def write_gpu_report(
         f"| Price history depth | {depth_note} |\n"
         + excluded_note
     )
+
+    # Discard breakdown (always shown — key calibration data)
+    if discard_breakdown:
+        total_discarded = total_fetched - after_discard
+        sections.append("## GPU Discard Breakdown\n")
+        rows = "".join(
+            f"| {label} | {count} |\n"
+            for label, count in discard_breakdown.items()
+            if count > 0
+        )
+        if rows:
+            sections.append(
+                f"| Reason | Count |\n|---|---|\n"
+                + rows
+                + f"| **Total discarded** | **{total_discarded}** |\n"
+            )
+        else:
+            sections.append(f"_No listings discarded this run._\n")
 
     # GPU Price History (per query, suppressed if <5 observations)
     from src.database import open_db, gpu_price_stats, price_context, percentile_rank

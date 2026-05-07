@@ -50,6 +50,27 @@ WRONG_VRAM_PATTERNS = [
 # CMP (Crypto Mining Processor) — no display output, not usable
 CMP_PATTERNS = [r"\bCMP\b", r"crypto\s+mining\s+processor"]
 
+# GPU accessories — cooling hardware, bridges, cables; not the card itself
+GPU_ACCESSORY_KEYWORDS = [
+    "water block", "waterblock", "water cooling", "liquid cooling",
+    "heatsink", "cooler", "shroud", "backplate",
+    "nvlink bridge", "nv link bridge", "sli bridge",
+    "power cable", "power adapter", "bracket", "riser",
+]
+
+# Standalone bridge signals — used with card_title_check
+BRIDGE_SIGNALS = ["nvlink bridge", "nv link bridge", "sli bridge"]
+
+# Functional defects in description → hard discard (not a flag)
+DESCRIPTION_DISCARD_SIGNALS = [
+    "memory error", "vram error", "memory errors",
+    "randomly fail", "random failure", "random crashes",
+    "artifacting", "screen artifacts", "visual artifacts",
+    "does not boot", "no post", "no display output",
+    "sold for parts", "parts only",
+    "bios corrupted", "bios error",
+]
+
 
 def _text(item: dict[str, Any]) -> str:
     return item.get("title", "") + " " + item.get("short_description", "")
@@ -62,6 +83,29 @@ def _text_upper(item: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Individual filter predicates
 # ---------------------------------------------------------------------------
+
+def _filter_gpu_accessory(item: dict[str, Any]) -> tuple[bool, str]:
+    """
+    Discard GPU accessories (water blocks, NVLink/SLI bridges, cables, etc.).
+
+    Also catches standalone bridge listings that slipped past the NVLink query
+    pre-filter — if a title contains bridge signals but no GPU is being sold.
+    """
+    title_lower = item.get("title", "").lower()
+
+    for kw in GPU_ACCESSORY_KEYWORDS:
+        if kw in title_lower:
+            return True, f"GPU accessory (not a card): '{kw}'"
+
+    # Standalone bridge: bridge signal present but no "RTX" or "GeForce" in title
+    has_bridge = any(s in title_lower for s in BRIDGE_SIGNALS)
+    if has_bridge:
+        has_gpu = bool(re.search(r"\brtx\b|\bgeforce\b|\bgtx\b", title_lower))
+        if not has_gpu:
+            return True, "GPU accessory (not a card): standalone bridge, no GPU in title"
+
+    return False, ""
+
 
 def _filter_wrong_card(item: dict[str, Any]) -> tuple[bool, str]:
     """Discard Ti variant, 3080/3070, and 40-series mentions."""
@@ -177,6 +221,7 @@ def apply_gpu_filters(
     verbose: bool = False,
 ) -> tuple[bool, str]:
     checks = [
+        _filter_gpu_accessory,
         _filter_wrong_card,
         _filter_wrong_vram,
         _filter_cmp,
@@ -214,3 +259,69 @@ def filter_gpu_items(
         else:
             kept.append(item)
     return kept, discarded
+
+
+def filter_by_description(
+    items: list[dict[str, Any]],
+    verbose: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Second-pass discard filter: runs after enrich_gpu_items() has populated
+    the 'description' field. Items with no description pass through unchanged.
+    """
+    kept, discarded = [], []
+    for item in items:
+        desc = item.get("description", "").lower()
+        matched_signal = None
+        for signal in DESCRIPTION_DISCARD_SIGNALS:
+            if signal in desc:
+                matched_signal = signal
+                break
+        if matched_signal:
+            item = dict(item)
+            item["discard_reason"] = f"Description: functional defect disclosed ('{matched_signal}')"
+            if verbose:
+                print(f"  [GPU DESC DISCARD] {item.get('title','?')[:60]!r}: {item['discard_reason']}")
+            discarded.append(item)
+        else:
+            kept.append(item)
+    return kept, discarded
+
+
+# Ordered category definitions — each (label, substrings) pair maps reason strings
+# to a human-readable category. First match wins, preserving the single-count rule.
+_DISCARD_CATEGORIES: list[tuple[str, list[str]]] = [
+    ("Description: functional defect",    ["Description: functional defect"]),
+    ("GPU accessory (not a card)",        ["GPU accessory"]),
+    ("Wrong card detected",               ["Wrong card", "Wrong VRAM", "CMP variant"]),
+    ("Price out of range",                ["exceeds GPU ceiling", "below GPU floor"]),
+    ("Seller feedback < 98%",             ["feedback", "< 98%"]),
+    ("Seller transactions < 50",          ["feedback score", "< 50"]),
+    ("Condition: for parts/not working",  ["for parts", "not working", "parts/not working"]),
+    ("Outside United States",             ["outside US"]),
+    ("Ending auction",                    ["auction ending"]),
+]
+_DISCARD_OTHER = "Other"
+
+
+def categorize_discard_reasons(discarded: list[dict[str, Any]]) -> dict[str, int]:
+    """
+    Return an ordered dict mapping category label -> count.
+
+    Each discarded item is counted under exactly one category (first match).
+    """
+    counts: dict[str, int] = {label: 0 for label, _ in _DISCARD_CATEGORIES}
+    counts[_DISCARD_OTHER] = 0
+
+    for item in discarded:
+        reason = item.get("discard_reason", "")
+        matched = False
+        for label, substrings in _DISCARD_CATEGORIES:
+            if any(s in reason for s in substrings):
+                counts[label] += 1
+                matched = True
+                break
+        if not matched:
+            counts[_DISCARD_OTHER] += 1
+
+    return counts

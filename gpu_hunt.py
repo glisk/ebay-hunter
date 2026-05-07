@@ -71,23 +71,39 @@ def run_once(args: argparse.Namespace) -> bool:
         total_fetched = len(raw_items)
         after_dedup = total_fetched
 
-        # 2. Apply GPU discard filters
+        # 2. Load cache early — needed for description re-use in enrichment
+        store = gpu_persistence.load_gpu_cache()
+
+        # 3. Title-based discard filters
         kept, discarded = gpu_filters.filter_gpu_items(
             raw_items,
             max_price=args.max_price,
             verbose=args.verbose_filters,
         )
+
+        # 4. Enrich survivors with full description text (1 API call/item, cached)
+        kept = gpu_search.enrich_gpu_items(
+            kept,
+            store=store,
+            sandbox=args.sandbox,
+        )
+
+        # 5. Description-based discard (functional defects disclosed in body text)
+        kept, desc_discarded = gpu_filters.filter_by_description(
+            kept,
+            verbose=args.verbose_filters,
+        )
+        discarded.extend(desc_discarded)
         after_discard = len(kept)
 
-        # 3. Score remaining items
+        # 6. Score remaining items
         scored = gpu_scorer.score_gpu_items(kept)
         after_score = len(scored)
 
-        # 4. Load previous GPU cache and detect changes
-        store = gpu_persistence.load_gpu_cache()
+        # 7. Detect changes against cache (already loaded in step 2)
         updated_store, new_listings, price_drops, disappeared = gpu_persistence.merge_gpu_run(scored, store)
 
-        # 5. Save updated GPU state
+        # 8. Save updated GPU state
         gpu_persistence.save_gpu_results(updated_store)
         gpu_persistence.save_gpu_high_priority(updated_store)
         gpu_persistence.append_gpu_run_log(
@@ -101,7 +117,7 @@ def run_once(args: argparse.Namespace) -> bool:
             queries_run=gpu_search.GPU_QUERIES,
         )
 
-        # 6. Record GPU price observations in SQLite (gpu_price_observations table)
+        # 9. Record GPU price observations in SQLite (gpu_price_observations table)
         observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn = database.open_db()
         obs_excluded = 0
@@ -135,7 +151,7 @@ def run_once(args: argparse.Namespace) -> bool:
         history_depth = database.gpu_history_depth_days(conn)
         conn.close()
 
-        # 7. Render terminal output
+        # 10. Render terminal output
         gpu_display.print_gpu_full_results(
             scored_items=scored,
             new_listings=new_listings,
@@ -148,9 +164,10 @@ def run_once(args: argparse.Namespace) -> bool:
             new_only=args.new_only,
         )
 
-        # 8. Write markdown report if requested
+        # 11. Write markdown report if requested
         if args.report:
             from src import gpu_report as reporter
+            discard_breakdown = gpu_filters.categorize_discard_reasons(discarded)
             path = reporter.write_gpu_report(
                 scored_items=scored,
                 new_listings=new_listings,
@@ -161,6 +178,7 @@ def run_once(args: argparse.Namespace) -> bool:
                 after_discard=after_discard,
                 history_depth=history_depth,
                 obs_excluded=obs_excluded,
+                discard_breakdown=discard_breakdown,
             )
             gpu_display.console.print(f"[dim]GPU report written to {path}[/dim]")
 
