@@ -179,14 +179,12 @@ def price_context(price: float, stats: dict[str, Any]) -> str:
 def history_depth_days(conn: sqlite3.Connection) -> int:
     """Return how many calendar days of observations are in the database."""
     row = conn.execute(
-        "SELECT MIN(observed_at) AS earliest FROM price_observations"
+        "SELECT CAST(julianday('now') - julianday(MIN(observed_at)) AS INTEGER) AS depth "
+        "FROM price_observations"
     ).fetchone()
-    if not row or not row["earliest"]:
+    if not row or row["depth"] is None:
         return 0
-    from datetime import datetime, timezone
-    earliest = datetime.fromisoformat(row["earliest"].replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
-    return max(0, (now - earliest).days)
+    return max(0, row["depth"])
 
 
 # ---------------------------------------------------------------------------
