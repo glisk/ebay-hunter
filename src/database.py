@@ -69,7 +69,14 @@ def record_observation(
     price: float,
     score: int | None,
     status: str = "active",
-) -> None:
+    flags: list[str] | None = None,
+) -> bool:
+    """
+    Record a price observation. Returns False (skipped) if flags contain SUSPICIOUS_LOW.
+    Anomalous prices must not contaminate the market statistics baseline.
+    """
+    if flags and "SUSPICIOUS_LOW" in flags:
+        return False
     conn.execute(
         """
         INSERT INTO price_observations
@@ -78,6 +85,7 @@ def record_observation(
         """,
         (item_id, search_query, observed_at, price, score, status),
     )
+    return True
 
 
 def mark_disappeared(
