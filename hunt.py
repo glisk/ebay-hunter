@@ -138,18 +138,22 @@ def run_once(args: argparse.Namespace) -> bool:
         # 6. Record price observations in SQLite history DB
         observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn = database.open_db()
+        obs_excluded = 0
         for item in scored:
             item_id = item.get("item_id", "")
             queries = query_hits.get(item_id, [])
             search_query = queries[0] if queries else "unknown"
-            database.record_observation(
+            recorded = database.record_observation(
                 conn=conn,
                 item_id=item_id,
                 search_query=search_query,
                 observed_at=observed_at,
                 price=item.get("price", 0.0),
                 score=item.get("score"),
+                flags=item.get("flags", []),
             )
+            if not recorded:
+                obs_excluded += 1
         for item in disappeared:
             item_id = item.get("item_id", "")
             queries = query_hits.get(item_id, [])
@@ -190,6 +194,7 @@ def run_once(args: argparse.Namespace) -> bool:
                 after_dedup=after_dedup,
                 after_discard=after_discard,
                 history_depth=history_depth,
+                obs_excluded=obs_excluded,
             )
             display.console.print(f"[dim]Report written to {path}[/dim]")
 
