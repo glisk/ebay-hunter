@@ -61,6 +61,16 @@ GPU_ACCESSORY_KEYWORDS = [
 # Standalone bridge signals — used with card_title_check
 BRIDGE_SIGNALS = ["nvlink bridge", "nv link bridge", "sli bridge"]
 
+# Functional defects in description → hard discard (not a flag)
+DESCRIPTION_DISCARD_SIGNALS = [
+    "memory error", "vram error", "memory errors",
+    "randomly fail", "random failure", "random crashes",
+    "artifacting", "screen artifacts", "visual artifacts",
+    "does not boot", "no post", "no display output",
+    "sold for parts", "parts only",
+    "bios corrupted", "bios error",
+]
+
 
 def _text(item: dict[str, Any]) -> str:
     return item.get("title", "") + " " + item.get("short_description", "")
@@ -251,9 +261,37 @@ def filter_gpu_items(
     return kept, discarded
 
 
+def filter_by_description(
+    items: list[dict[str, Any]],
+    verbose: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Second-pass discard filter: runs after enrich_gpu_items() has populated
+    the 'description' field. Items with no description pass through unchanged.
+    """
+    kept, discarded = [], []
+    for item in items:
+        desc = item.get("description", "").lower()
+        matched_signal = None
+        for signal in DESCRIPTION_DISCARD_SIGNALS:
+            if signal in desc:
+                matched_signal = signal
+                break
+        if matched_signal:
+            item = dict(item)
+            item["discard_reason"] = f"Description: functional defect disclosed ('{matched_signal}')"
+            if verbose:
+                print(f"  [GPU DESC DISCARD] {item.get('title','?')[:60]!r}: {item['discard_reason']}")
+            discarded.append(item)
+        else:
+            kept.append(item)
+    return kept, discarded
+
+
 # Ordered category definitions — each (label, substrings) pair maps reason strings
 # to a human-readable category. First match wins, preserving the single-count rule.
 _DISCARD_CATEGORIES: list[tuple[str, list[str]]] = [
+    ("Description: functional defect",    ["Description: functional defect"]),
     ("GPU accessory (not a card)",        ["GPU accessory"]),
     ("Wrong card detected",               ["Wrong card", "Wrong VRAM", "CMP variant"]),
     ("Price out of range",                ["exceeds GPU ceiling", "below GPU floor"]),

@@ -7,12 +7,15 @@ and deduplicates by eBay item ID. Separate from workstation search.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
 import requests
 
 from .auth import get_auth_headers, _base_url, REQUESTS_VERIFY
+
+DESCRIPTION_FETCH_DELAY = 1.0  # seconds — eBay rate-limit courtesy
 
 # ---------------------------------------------------------------------------
 # Query configuration
@@ -223,3 +226,72 @@ def run_gpu_queries(
                     query_hits[iid].append(query)
 
     return list(seen.values()), query_hits
+
+
+# ---------------------------------------------------------------------------
+# Per-item description enrichment
+# ---------------------------------------------------------------------------
+
+def _strip_html(html: str) -> str:
+    """Strip HTML tags and decode basic entities to produce plain text."""
+    text = re.sub(r'<[^>]+>', ' ', html)
+    text = (text
+            .replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+            .replace('&nbsp;', ' ').replace('&#39;', "'").replace('&quot;', '"'))
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _fetch_item_description(item_id: str, headers: dict, sandbox: bool) -> str:
+    """
+    Fetch full listing description via GET /buy/browse/v1/item/{item_id}.
+
+    Returns plain text (HTML stripped). Returns empty string on any error so
+    the caller can proceed without a description rather than crashing.
+    """
+    base = _base_url(sandbox)
+    url = f"{base}/buy/browse/v1/item/{item_id}"
+    try:
+        resp = requests.get(url, headers=headers, verify=REQUESTS_VERIFY, timeout=30)
+        resp.raise_for_status()
+        html = resp.json().get("description", "")
+        return _strip_html(html) if html else ""
+    except Exception:
+        return ""
+
+
+def enrich_gpu_items(
+    items: list[dict[str, Any]],
+    store: dict[str, dict[str, Any]],
+    sandbox: bool = False,
+    force_refresh: bool = False,
+) -> list[dict[str, Any]]:
+    """
+    Fetch full description text for each item that passed title-based discard.
+
+    Re-uses cached descriptions to avoid redundant API calls. Applies a 1-second
+    delay between new fetches to respect eBay rate limits.
+
+    Returns a new list of items with a 'description' field added to each.
+    """
+    headers = get_auth_headers(sandbox=sandbox, force_refresh=force_refresh)
+    enriched: list[dict[str, Any]] = []
+    first_fetch = True
+
+    for item in items:
+        item = dict(item)
+        item_id = item.get("item_id", "")
+
+        cached = store.get(item_id, {})
+        if cached.get("description"):
+            item["description"] = cached["description"]
+        elif item_id:
+            if not first_fetch:
+                time.sleep(DESCRIPTION_FETCH_DELAY)
+            item["description"] = _fetch_item_description(item_id, headers, sandbox)
+            first_fetch = False
+        else:
+            item["description"] = ""
+
+        enriched.append(item)
+
+    return enriched

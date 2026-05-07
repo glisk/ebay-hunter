@@ -30,8 +30,14 @@ FLAG_REPAIR_DISCLOSED = "REPAIR_DISCLOSED"
 FLAG_NVLINK_INCLUDED = "NVLINK_INCLUDED"
 FLAG_TITLE_INCONSISTENCY = "TITLE_INCONSISTENCY"
 FLAG_NO_ACTUAL_PHOTO = "NO_ACTUAL_PHOTO"
+FLAG_SEE_DESCRIPTION = "SEE_DESCRIPTION"
 FLAG_NEW = "NEW"
 FLAG_PRICE_DROP = "PRICE_DROP"
+
+SEE_DESCRIPTION_PATTERNS = [
+    "read description", "see description", "read listing",
+    "read details", "see listing",
+]
 
 REPAIR_SIGNALS = [
     "repaired", " repair ", "professionally repaired",
@@ -56,7 +62,9 @@ GPU_PRICE_TABLE = {
 # ---------------------------------------------------------------------------
 
 def _text(item: dict[str, Any]) -> str:
-    return item.get("title", "") + " " + item.get("short_description", "")
+    return (item.get("title", "") + " "
+            + item.get("short_description", "") + " "
+            + item.get("description", ""))
 
 
 def detect_card_confirmed(item: dict[str, Any]) -> str:
@@ -191,6 +199,12 @@ def detect_title_inconsistency(item: dict[str, Any]) -> bool:
     return has_3090 and has_other
 
 
+def detect_see_description(item: dict[str, Any]) -> bool:
+    """Flag if title contains 'read/see description' — seller placed material info in body."""
+    title_lower = item.get("title", "").lower()
+    return any(p in title_lower for p in SEE_DESCRIPTION_PATTERNS)
+
+
 def detect_no_actual_photo(item: dict[str, Any]) -> bool:
     """Flag stock photo / placeholder image language."""
     text = _text(item).lower()
@@ -311,6 +325,9 @@ def score_gpu_listing(item: dict[str, Any]) -> dict[str, Any]:
 
     if detect_no_actual_photo(item):
         flags.append(FLAG_NO_ACTUAL_PHOTO)
+
+    if detect_see_description(item):
+        flags.append(FLAG_SEE_DESCRIPTION)
 
     # Determine price row condition key
     condition_key = "refurbished" if condition_tier == "refurbished" else "standard"

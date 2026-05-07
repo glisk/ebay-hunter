@@ -134,6 +134,7 @@ def _make_gpu_record(
         "url": item.get("url", ""),
         "location": item.get("location", ""),
         "local_pickup": item.get("local_pickup", False),
+        "description": item.get("description", ""),
         "first_seen": first_seen,
         "last_seen": last_seen,
         "status": status,

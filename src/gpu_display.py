@@ -39,6 +39,7 @@ GPU_FLAG_STYLES: dict[str, tuple[str, str]] = {
     "TITLE_INCONSISTENCY": ("⚠ TITLE MISMATCH", "bold magenta"),
     "NO_ACTUAL_PHOTO":     ("📷 STOCK PHOTO", "dim yellow"),
     "REPAIR_DISCLOSED":    ("🔧 REPAIR DISCLOSED", "bold red"),
+    "SEE_DESCRIPTION":     ("👁 SEE DESCRIPTION", "bold yellow"),
     "FLAG_CHANGED":        ("FLAG CHANGED", "bold white on blue"),
 }
 
