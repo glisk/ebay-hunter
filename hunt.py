@@ -113,15 +113,24 @@ def run_once(args: argparse.Namespace) -> bool:
         )
         after_discard = len(kept)
 
-        # 3. Score remaining items
+        # 3. Load cache early — needed for variant_data caching
+        store = persistence.load_cache()
+
+        # 4. Enrich multi-variant listings with resolved RAM and flags
+        kept = search.enrich_variant_items(
+            kept,
+            store,
+            sandbox=args.sandbox,
+        )
+
+        # 5. Score remaining items
         scored = scorer.score_items(kept)
         after_score = len(scored)
 
-        # 4. Load previous cache and detect changes
-        store = persistence.load_cache()
+        # 6. Detect changes against previous cache
         updated_store, new_listings, price_drops, disappeared = persistence.merge_run(scored, store)
 
-        # 5. Save updated state
+        # 7. Save updated state
         persistence.save_results(updated_store)
         persistence.save_high_priority(updated_store)
         persistence.append_run_log(
@@ -135,7 +144,7 @@ def run_once(args: argparse.Namespace) -> bool:
             queries_run=search.QUERIES,
         )
 
-        # 6. Record price observations in SQLite history DB
+        # 8. Record price observations in SQLite history DB
         observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn = database.open_db()
         obs_excluded = 0
@@ -169,7 +178,7 @@ def run_once(args: argparse.Namespace) -> bool:
         history_depth = database.history_depth_days(conn)
         conn.close()
 
-        # 7. Render output
+        # 9. Render output
         display.print_full_results(
             scored_items=scored,
             new_listings=new_listings,
@@ -182,7 +191,7 @@ def run_once(args: argparse.Namespace) -> bool:
             new_only=args.new_only,
         )
 
-        # 8. Write markdown report if requested
+        # 10. Write markdown report if requested
         if args.report:
             from src import report as reporter
             path = reporter.write_report(

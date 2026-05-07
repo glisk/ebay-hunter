@@ -121,7 +121,13 @@ def detect_cpu(item: dict[str, Any]) -> str | None:
 
 
 def detect_ram(item: dict[str, Any]) -> int | None:
-    """Return detected RAM in GB, or None if not found."""
+    """Return detected RAM in GB, or None if not found.
+
+    If variant enrichment resolved the RAM (see search.enrich_variant_items),
+    that value takes precedence over title parsing.
+    """
+    if "ram_resolved_gb" in item:
+        return item["ram_resolved_gb"]  # int or None
     text = _text(item)
     for pattern, gb in RAM_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
@@ -278,7 +284,7 @@ def score_listing(item: dict[str, Any]) -> dict[str, Any]:
     item["psu_status"] = psu
     item["psu_source"] = psu_source
 
-    flags: list[str] = list(item.get("flags", []))
+    flags: list[str] = list(item.get("flags", [])) + list(item.get("variant_flags", []))
     breakdown: dict[str, int] = {}
 
     # --- CPU generation (25 pts) ---
