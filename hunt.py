@@ -92,7 +92,7 @@ def run_once(args: argparse.Namespace) -> bool:
 
     Returns True on success, False on error.
     """
-    from src import auth, search, filters, scorer, persistence, display, database
+    from src import auth, search, filters, scorer, persistence, display, database, multiseller
     from datetime import datetime, timezone
 
     try:
@@ -127,10 +127,13 @@ def run_once(args: argparse.Namespace) -> bool:
         scored = scorer.score_items(kept)
         after_score = len(scored)
 
-        # 6. Detect changes against previous cache
+        # 6. Flag multi-storefront candidates
+        scored = multiseller.apply_storefront_flags(scored)
+
+        # 7. Detect changes against previous cache
         updated_store, new_listings, price_drops, disappeared = persistence.merge_run(scored, store)
 
-        # 7. Save updated state
+        # 8. Save updated state
         persistence.save_results(updated_store)
         persistence.save_high_priority(updated_store)
         persistence.append_run_log(
@@ -144,12 +147,22 @@ def run_once(args: argparse.Namespace) -> bool:
             queries_run=search.QUERIES,
         )
 
-        # 8. Record price observations in SQLite history DB
+        # 9. Record price observations — one per multi-storefront group
         observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn = database.open_db()
         obs_excluded = 0
+        # Skip non-canonical storefronts so each operator contributes once per run
+        recorded_groups: set[str] = set()
         for item in scored:
             item_id = item.get("item_id", "")
+            related = item.get("related_storefront_ids")
+            if related:
+                # Canonical ID = lexicographic minimum across the whole group
+                group_key = min([item_id] + related)
+                if group_key in recorded_groups:
+                    obs_excluded += 1
+                    continue
+                recorded_groups.add(group_key)
             queries = query_hits.get(item_id, [])
             search_query = queries[0] if queries else "unknown"
             recorded = database.record_observation(
