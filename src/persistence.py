@@ -162,6 +162,7 @@ def _make_record(
         "status": status,
         "flags": list(set(flags)),  # deduplicate flags
         "score_breakdown": item.get("score_breakdown", {}),
+        "variant_data": item.get("variant_data"),
     }
 
 

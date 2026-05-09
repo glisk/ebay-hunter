@@ -7,6 +7,7 @@ and deduplicates by eBay item ID.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -43,6 +44,9 @@ EARLY_STOP_THRESHOLD = 3
 
 # Rate-limit pause between page requests (seconds)
 PAGE_DELAY = 0.25
+
+# Rate-limit pause between item detail fetches for variant resolution
+VARIANT_FETCH_DELAY = 0.5
 
 
 def _build_filter(max_price: float = 2000.0) -> str:
@@ -179,9 +183,147 @@ def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
         "short_description": raw.get("shortDescription", ""),
         # Time left is present for auctions
         "time_left": raw.get("itemEndDate", ""),
+        # Presence of variationSummary indicates a multi-variant listing where
+        # the title describes the top config and the price is the base variant.
+        "is_multi_variant": "variationSummary" in raw,
         # Raw item for any downstream field access
         "_raw": raw,
     }
+
+
+def _fetch_item_detail(
+    item_id: str,
+    headers: dict,
+    sandbox: bool,
+) -> dict[str, Any]:
+    """Fetch full item detail from Browse API. Returns {} on error."""
+    base = _base_url(sandbox)
+    url = f"{base}/buy/browse/v1/item/{item_id}"
+    try:
+        resp = requests.get(url, headers=headers, verify=REQUESTS_VERIFY, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as exc:
+        print(f"[search] item detail fetch failed for {item_id}: {exc}")
+        return {}
+
+
+def _parse_ram_gb_from_aspect(value: str) -> int | None:
+    """Extract GB integer from a string like '128GB ECC DDR4'."""
+    m = re.search(r"(\d+)\s*[Gg][Bb]", value)
+    return int(m.group(1)) if m else None
+
+
+def _parse_variants(detail: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """
+    Parse variant list from item detail response.
+
+    Returns list of {ram_gb: int|None, price: float, available: bool}, or None
+    if no recognized variant structure is found (triggers diagnostic logging).
+    """
+    RAM_ASPECT_NAMES = {"ram", "memory", "installed memory", "total memory"}
+
+    # Structure: detail["variationGroups"][*] with aspects[] and availableQuantity
+    groups = detail.get("variationGroups", [])
+    if groups:
+        variants = []
+        for group in groups:
+            ram_gb = None
+            for aspect in group.get("aspects", []):
+                if aspect.get("localizedAspectName", "").lower() in RAM_ASPECT_NAMES:
+                    values = aspect.get("aspectValues", [])
+                    if values:
+                        ram_gb = _parse_ram_gb_from_aspect(
+                            values[0].get("localizedValue", "")
+                        )
+            price_val = 0.0
+            price_range = group.get("pricing", {}).get("priceRange", {})
+            try:
+                price_val = float(
+                    price_range.get("minimum", {}).get("value", 0) or 0
+                )
+            except (TypeError, ValueError):
+                pass
+            available = (group.get("availableQuantity") or 0) > 0
+            variants.append({"ram_gb": ram_gb, "price": price_val, "available": available})
+        return variants
+
+    # Fallback: detail["variations"] list
+    variations = detail.get("variations", [])
+    if variations and isinstance(variations, list):
+        variants = []
+        for v in variations:
+            ram_gb = None
+            for aspect in v.get("variationAspects", []):
+                if aspect.get("localizedAspectName", "").lower() in RAM_ASPECT_NAMES:
+                    ram_gb = _parse_ram_gb_from_aspect(
+                        aspect.get("localizedValue", "")
+                    )
+            price_val = 0.0
+            try:
+                price_val = float(
+                    (v.get("price") or {}).get("value", 0) or 0
+                )
+            except (TypeError, ValueError):
+                pass
+            available = (v.get("availabilityThresholdType") != "MORE_THAN"
+                         or (v.get("estimatedAvailabilities") or [{}])[0].get(
+                             "estimatedAvailableQuantity", 0) > 0)
+            variants.append({"ram_gb": ram_gb, "price": price_val, "available": available})
+        return variants
+
+    return None  # Unknown structure — caller should log and skip
+
+
+def enrich_variant_items(
+    items: list[dict[str, Any]],
+    store: dict[str, dict[str, Any]],
+    sandbox: bool = False,
+    force_refresh: bool = False,
+) -> list[dict[str, Any]]:
+    """
+    For multi-variant listings, fetch item detail and set variant_data.
+
+    variant_data is a list of {ram_gb, price, available} dicts. It is cached
+    in the store so subsequent runs avoid redundant API calls.
+
+    Non-variant items pass through unchanged.
+    """
+    headers = get_auth_headers(sandbox=sandbox, force_refresh=force_refresh)
+    enriched = []
+    first_fetch = True
+
+    for item in items:
+        item = dict(item)
+        if not item.get("is_multi_variant"):
+            enriched.append(item)
+            continue
+
+        item_id = item.get("item_id", "")
+        cached_record = store.get(item_id, {})
+
+        if "variant_data" in cached_record:
+            item["variant_data"] = cached_record["variant_data"]
+        elif item_id:
+            if not first_fetch:
+                time.sleep(VARIANT_FETCH_DELAY)
+            detail = _fetch_item_detail(item_id, headers, sandbox)
+            first_fetch = False
+            variants = _parse_variants(detail)
+            if variants is None:
+                # Unknown API structure — log top-level keys for diagnosis
+                print(
+                    f"[search] unrecognized variant structure for {item_id}, "
+                    f"top-level keys: {list(detail.keys())}"
+                )
+                variants = []
+            item["variant_data"] = variants
+        else:
+            item["variant_data"] = []
+
+        enriched.append(item)
+
+    return enriched
 
 
 def run_all_queries(
