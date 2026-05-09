@@ -146,6 +146,36 @@ def write_report(
     except Exception:
         pass  # DB not yet initialized or no data — silently skip
 
+    # Multi-storefront candidates
+    from src.multiseller import find_groups
+    ms_groups = find_groups(scored_items)
+    if ms_groups:
+        id_to_item = {i.get("item_id"): i for i in scored_items}
+        sections.append(f"## Multi-Storefront Candidates ({len(ms_groups)} group(s))\n")
+        sections.append(
+            "> These listings share location and price. They are likely one operator "
+            "with multiple eBay accounts. Each group appears once in the ranked sections "
+            "below but contributes only one price history observation per run.\n"
+        )
+        for g_idx, group in enumerate(ms_groups, 1):
+            members = [id_to_item[iid] for iid in group if iid in id_to_item]
+            if not members:
+                continue
+            representative = max(members, key=lambda x: (x.get("seller_feedback_score") or 0))
+            city = representative.get("location", "unknown")
+            price = representative.get("price", 0)
+            sections.append(
+                f"### Group {g_idx} — {len(group)} storefronts — {city} — {_fmt_price(price)}\n"
+            )
+            rows = ["| Storefront | Feedback | Score | Item ID |", "|---|---|---|---|"]
+            for m in sorted(members, key=lambda x: -(x.get("seller_feedback_score") or 0)):
+                fb = _fmt_feedback(m.get("seller_feedback_pct") or m.get("seller_feedback"))
+                rows.append(
+                    f"| {m.get('seller_username', '?')} | {fb} "
+                    f"| {m.get('score', 0)} | [{m.get('item_id','')}]({m.get('url','')}) |"
+                )
+            sections.append("\n".join(rows) + "\n")
+
     # New listings
     if new_listings:
         sections.append(f"## New Listings ({len(new_listings)})\n")
